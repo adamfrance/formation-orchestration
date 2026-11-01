@@ -48,8 +48,8 @@ case "${1:-poste}" in
       sudo sysctl -q -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512 ||
         echo "⚠️  limite non relevée : le cluster peut être instable"
     fi
-    # Sur une machine moyenne, Ruée sur le poste laisse la place au cluster
-    if [ "$profil" = leger ] && [ -f ruee/compose.yaml ] && [ -n "$(cd ruee && docker compose ps -q)" ]; then
+    # Ruée sur le poste laisse la place au cluster : la mémoire, et le port 8025 des courriels, que les deux utilisent
+    if [ -f ruee/compose.yaml ] && [ -n "$(cd ruee && docker compose ps -q)" ]; then
       ruee/poste.sh arreter
     fi
     # Un cluster mis en pause par ./arreter.sh repart tel qu'il était

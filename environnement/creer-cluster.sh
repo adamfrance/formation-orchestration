@@ -22,6 +22,9 @@ if ! kind get clusters 2>/dev/null | grep -qx formation; then
   kind create cluster --config "$config" \
     --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
 fi
+# Au redémarrage de la machine, l'API du cluster met quelques dizaines de secondes à répondre : on l'attend (3 min au
+# plus ; constaté le 01/11/2026 : sans cette attente, la commande suivante échoue juste après le réveil)
+for _ in $(seq 90); do kubectl get --raw /readyz >/dev/null 2>&1 && break; sleep 2; done
 
 # 3. Chaque nœud tire les images localhost:5001/… depuis le conteneur du registre
 for noeud in $(kind get nodes --name formation); do
