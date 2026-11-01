@@ -1,0 +1,7 @@
+# Le contrôleur d'Envoy Gateway, sur le nœud du plan de contrôle (voir systeme.yaml)
+deployment:
+  pod:
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+    tolerations:
+      - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }

@@ -1,0 +1,11 @@
+# Le cluster léger, pour une machine de 3,5 à 7,5 Go : un seul nœud, qui est à la fois plan de contrôle et nœud de
+# travail (kind autorise alors les applications sur le plan de contrôle). Pas de panne de nœud à montrer ici.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: formation
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080 # le port de la passerelle HTTP sur le nœud
+        hostPort: 8080       # devient http://localhost:8080 sur la machine
+        listenAddress: "127.0.0.1" # sur l'adresse locale seulement : invisible du réseau

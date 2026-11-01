@@ -1,0 +1,6 @@
+# Profil léger (un seul nœud de 2 processeurs) : KEDA réserve moins de processeur. Mesuré le 01/11/2026 : sans cela,
+# les composants réservent 1 960 m sur 2 000 m, et la base de Ruée reste « Pending » (Insufficient cpu)
+resources:
+  operator: { requests: { cpu: 20m, memory: 100Mi } }
+  metricServer: { requests: { cpu: 20m, memory: 100Mi } }
+  webhooks: { requests: { cpu: 20m, memory: 100Mi } }

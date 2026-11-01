@@ -1,0 +1,76 @@
+# La passerelle HTTP commune, gérée par l'équipe plateforme : chaque équipe y attache ses routes (HTTPRoute)
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: passerelle
+---
+# Sur un poste, pas d'équilibreur de charge du cloud : le service d'Envoy écoute sur le port 30080 de chaque nœud
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: port-de-noeud
+  namespace: passerelle
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment: # les proxys Envoy sur le nœud du plan de contrôle, par où arrive le port 8080 du poste
+        replicas: 2
+        pod:
+          nodeSelector: { node-role.kubernetes.io/control-plane: "" }
+          tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+      envoyService:
+        type: NodePort
+        externalTrafficPolicy: Cluster # accepté sur tout nœud, même sans Envoy (le port du poste arrive sur le plan de contrôle)
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+                - port: 80
+                  nodePort: 30080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: commune
+  namespace: passerelle
+spec:
+  gatewayClassName: envoy
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: port-de-noeud
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# Derrière l'équilibreur de charge du cloud, la passerelle ne voit que l'adresse de l'équilibreur : la vraie adresse du
+# client arrive dans l'en-tête X-Forwarded-For, que l'équilibreur écrit. On fait confiance à un intermédiaire (1 saut) :
+# c'est cette adresse que la limite de débit compte. Sans équilibreur devant (sur ce poste), un client pourrait écrire
+# lui-même l'en-tête : en recette, le test de charge s'en sert pour simuler des milliers de fans différents.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: adresse-du-client
+  namespace: passerelle
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: commune
+  clientIPDetection:
+    xForwardedFor:
+      numTrustedHops: 1

@@ -1,0 +1,7 @@
+# Les composants système (opérateurs, contrôleurs) vont sur le nœud du plan de contrôle, comme dans un service géré où
+# le fournisseur les fait tourner à part : quand un nœud de travail tombe, ils restent là pour réparer.
+# Utilisé pour CloudNativePG et KEDA (même structure de réglages).
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+tolerations:
+  - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }

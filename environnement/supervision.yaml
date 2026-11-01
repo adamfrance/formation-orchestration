@@ -1,0 +1,61 @@
+# Les réglages de kube-prometheus-stack (Prometheus, Grafana, l'agent de chaque nœud), réduits pour un poste :
+#   helm upgrade --install supervision prometheus-community/kube-prometheus-stack --version 92.16.1 \
+#     -n supervision --create-namespace -f supervision.yaml
+alertmanager:
+  enabled: false # pas d'envoi d'alertes en recette
+defaultRules:
+  create: false # pas des centaines de règles d'alerte par défaut : on garde la mémoire pour les mesures
+
+# Sur kind, ces composants n'écoutent que sur la machine elle-même : Prometheus ne peut pas les lire
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+
+prometheus:
+  prometheusSpec:
+    nodeSelector: { node-role.kubernetes.io/control-plane: "" } # sur le plan de contrôle (voir valeurs/systeme.yaml)
+    tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+    retention: 6h # 6 heures de mesures suffisent pour une journée de démonstration
+    scrapeInterval: 15s
+    resources:
+      requests: { cpu: 100m, memory: 200Mi }
+      limits: { memory: 500Mi }
+    # Lire les PodMonitor de tous les espaces de noms (ceux des équipes de Ruée), pas seulement ceux de ce paquet
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+
+grafana:
+  admin:
+    existingSecret: grafana-admin # le mot de passe, tiré au hasard par creer-cluster.sh (jamais celui par défaut)
+    userKey: admin-user
+    passwordKey: admin-password
+  persistence: { enabled: false }
+  nodeSelector: { node-role.kubernetes.io/control-plane: "" } # sur le plan de contrôle (voir valeurs/systeme.yaml)
+  tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+  resources: # Grafana dépasse 256 Mo au démarrage (arrêté par manque de mémoire, mesuré le 31/10/2026)
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL # les tableaux de bord rangés dans des ConfigMap étiquetés grafana_dashboard, partout
+
+kube-state-metrics:
+  nodeSelector: { node-role.kubernetes.io/control-plane: "" } # sur le plan de contrôle (voir valeurs/systeme.yaml)
+  tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 96Mi }
+
+prometheus-node-exporter: # l'agent de supervision de chaque nœud : un DaemonSet
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 48Mi }
+
+prometheusOperator:
+  nodeSelector: { node-role.kubernetes.io/control-plane: "" } # sur le plan de contrôle (voir valeurs/systeme.yaml)
+  tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+  resources:
+    requests: { cpu: 20m, memory: 48Mi }
+    limits: { memory: 128Mi }

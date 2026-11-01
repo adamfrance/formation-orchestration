@@ -1,0 +1,5 @@
+# Profil léger (un seul nœud de 2 processeurs) : le contrôleur d'Envoy Gateway réserve moins de processeur
+deployment:
+  envoyGateway:
+    resources:
+      requests: { cpu: 20m, memory: 256Mi }
