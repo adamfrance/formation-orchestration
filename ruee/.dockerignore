@@ -1,0 +1,6 @@
+.git
+*.md
+Dockerfile*
+compose.yaml
+deploiement
+infrastructure

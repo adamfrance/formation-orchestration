@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ruée : la tournée des stades 2027</title>
+<style>
+  :root { --fond: #10131c; --carte: #1b2030; --texte: #eef1f8; --doux: #9aa3b8; --accent: #ff5a36; --ok: #3ccf8e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--fond); color: var(--texte); }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h1 b { color: var(--accent); }
+  .doux { color: var(--doux); }
+  section { background: var(--carte); border-radius: 12px; padding: 20px; margin-top: 20px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 20px;
+           font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #333a50; background: #0d1018;
+                  color: inherit; font: inherit; margin: 4px 0 12px; }
+  .grand { font-size: 2.5rem; font-weight: 700; }
+  .ok { color: var(--ok); }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1><b>Ruée</b> · tournée des stades 2027</h1>
+  <p class="doux">12 concerts, ouverture des ventes à 10 h 00. <span id="file"></span></p>
+
+  <section id="etape-entrer">
+    <p>Entrez dans la file : vous gardez votre place, même si vous fermez la page quelques minutes.</p>
+    <button id="entrer">Entrer dans la file</button>
+  </section>
+
+  <section id="etape-attente" hidden>
+    <p class="doux">Votre rang</p>
+    <p class="grand" id="rang"></p>
+    <p id="attente"></p>
+  </section>
+
+  <section id="etape-choix" hidden>
+    <p class="ok">C'est votre tour : vous avez 10 minutes.</p>
+    <label>Concert <select id="concert"></select></label>
+    <label>Nombre de places <select id="nombre"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+    <button id="reserver">Réserver</button>
+  </section>
+
+  <section id="etape-paiement" hidden>
+    <p id="recap"></p>
+    <label>Courriel <input id="email" type="email" value="fan@exemple.fr"></label>
+    <label>Carte (finissant par 0000 : refusée) <input id="carte" inputmode="numeric" value="4970123456784242"></label>
+    <button id="payer">Payer</button>
+  </section>
+
+  <section id="etape-fin" hidden><p id="fin" class="ok"></p></section>
+  <p id="erreur" class="doux"></p>
+</main>
+<script>
+// La page du fan : elle ne parle qu'à la passerelle (/file pour la file, /api pour la vente)
+const $ = (id) => document.getElementById(id);                        // raccourci : un élément de la page par son id
+const euros = (c) =>  // 9500 centimes → « 95,00 € »
+  (c / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+let jeton = '', reservation = '';                                      // reçus en cours de route
+
+// montrer : affiche une seule étape (entrer, attendre, choisir, payer, fin)
+function montrer(etape) {
+  for (const s of document.querySelectorAll('section')) s.hidden = s.id !== etape;
+}
+
+// appeler : une requête JSON, avec le jeton une fois reçu ; une erreur HTTP devient un message affiché
+async function appeler(methode, chemin, corps) {
+  const entetes = { 'Content-Type': 'application/json' };
+  if (jeton) entetes.Authorization = 'Bearer ' + jeton;
+  const rep = await fetch(chemin, { method: methode, headers: entetes, body: corps && JSON.stringify(corps) });
+  const donnees = await rep.json().catch(() => ({}));
+  if (!rep.ok) throw new Error(donnees.erreur || 'erreur ' + rep.status);
+  return donnees;
+}
+
+// Le nombre de personnes qui attendent, rafraîchi toutes les 2 secondes
+async function suivreLaFile() {
+  const r = await appeler('GET', '/file');
+  $('file').textContent = r.en_attente > 0 ? r.en_attente + ' personnes attendent leur tour.' : '';
+}
+setInterval(() => suivreLaFile().catch(() => {}), 2000);
+suivreLaFile().catch(() => {});
+
+// 1. Entrer dans la file, puis redemander toutes les secondes jusqu'à recevoir le jeton
+$('entrer').onclick = async () => {
+  try {
+    const { id, rang } = await appeler('POST', '/file/entrer');
+    $('rang').textContent = rang.toLocaleString('fr-FR');
+    montrer('etape-attente');
+    for (;;) {
+      const t = await appeler('GET', '/file/' + id);
+      if (t.admis) { jeton = t.jeton; break; }
+      $('attente').textContent = t.devant.toLocaleString('fr-FR') + ' personnes devant vous, environ '
+        + t.attente_secondes + ' s.';
+      await new Promise((ok) => setTimeout(ok, 1000));
+    }
+    // Son tour est venu : la liste des concerts
+    const concerts = await appeler('GET', '/api/concerts');
+    $('concert').innerHTML = concerts.map((c) =>
+      `<option value="${c.id}">${c.date} · ${c.ville}, ${c.stade} · dès ${euros(c.prix_min_centimes)} · ${c.places_libres} places</option>`
+    ).join('');
+    montrer('etape-choix');
+  } catch (e) { $('erreur').textContent = e.message; }
+};
+
+// 2. Réserver : la vente bloque les places pendant 10 minutes
+$('reserver').onclick = async () => {
+  try {
+    const r = await appeler('POST', '/api/reservations', { concert: +$('concert').value, nombre: +$('nombre').value });
+    reservation = r.reservation;
+    $('recap').textContent = r.places.map((p) => `${p.categorie}, place ${p.numero}`).join(' · ')
+      + ' : ' + euros(r.montant_centimes) + ', bloquées 10 minutes.';
+    montrer('etape-paiement');
+  } catch (e) { $('erreur').textContent = e.message; }
+};
+
+// 3. Payer : la vente demande l'autorisation au service paiement, puis confie les billets à la file
+$('payer').onclick = async () => {
+  try {
+    const r = await appeler('POST', '/api/commandes', { reservation, email: $('email').value, carte: $('carte').value });
+    $('fin').textContent = `Commande ${r.commande} : ${euros(r.montant_centimes)}. ${r.message}.`;
+    montrer('etape-fin');
+  } catch (e) { $('erreur').textContent = e.message; }
+};
+</script>
+</body>
+</html>

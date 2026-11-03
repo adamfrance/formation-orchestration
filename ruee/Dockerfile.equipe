@@ -1,0 +1,8 @@
+# Première version de l'image de paiement, proposée par l'équipe (atelier du jour 1 : à relire avant la production)
+FROM golang:1.27
+WORKDIR /app
+COPY . .
+ENV BANQUE_CLE=cle-de-production-de-la-banque
+RUN go build -o paiement ./cmd/paiement
+EXPOSE 8080
+CMD ["./paiement"]

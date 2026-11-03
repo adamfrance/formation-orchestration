@@ -1,0 +1,108 @@
+# Le poste du développeur : toute la plateforme Ruée en une commande (./poste.sh demarrer, qui fournit les secrets).
+# Mêmes images qu'en production ; la banque et le courriel, qui sont des systèmes extérieurs, sont simulés.
+# Chaque service joint les autres par leur nom (vente, base, valkey-file…) : Compose crée un réseau privé et son DNS.
+name: ruee
+
+configs:
+  passerelle:   # la configuration de la passerelle, écrite ici : aucun fichier du poste à partager avec Docker
+    content: |
+      # Les adresses des conteneurs changent quand Compose les recrée : nginx redemande au DNS de Docker
+      # (127.0.0.11) toutes les 5 secondes, au lieu de garder l'adresse trouvée à son démarrage
+      resolver 127.0.0.11 valid=5s;
+      server {
+          listen 80;
+          set $$salle http://salle-attente:8080;
+          set $$vente http://vente:8080;
+          location = /    { proxy_pass $$salle; }   # la page du fan
+          location /file  { proxy_pass $$salle; }   # la file d'attente
+          location /api/  { proxy_pass $$vente; }   # la vente
+          location /      { return 404; }          # rien d'autre (ni /metrics, ni /sante)
+      }
+
+x-brique: &brique   # ce que partagent les briques construites par Ruée (« <<: *brique » les recopie)
+  build:
+    context: .                              # le dossier envoyé à BuildKit (moins ce que liste .dockerignore)
+  restart: unless-stopped                   # relancé s'il s'arrête, sauf arrêt volontaire
+  read_only: true                           # aucune écriture dans l'image : le service n'a besoin d'aucun fichier
+  security_opt: ["no-new-privileges:true"]  # le programme ne peut pas gagner de droits en cours de route
+
+services:
+  passerelle:   # une seule entrée, comme en production (sans la limite de débit)
+    image: nginx:1.31-alpine
+    ports: ["127.0.0.1:8000:80"]   # http://localhost:8000, sur l'adresse locale seulement (le cluster répond sur 8080)
+    configs: [{ source: passerelle, target: /etc/nginx/conf.d/default.conf }]
+    depends_on: [salle-attente, vente]
+
+  salle-attente:
+    <<: *brique
+    build: { context: ., args: { SERVICE: salle-attente } }  # la recette commune, avec le programme salle-attente
+    image: ruee/salle-attente:dev                             # le nom donné à l'image construite
+    environment:                                              # la configuration, comme un ConfigMap et un Secret
+      VALKEY_ADRESSE: valkey-file:6379
+      DEBIT_PAR_SECONDE: "50"
+      CLE_PRIVEE: ${CLE_PRIVEE:-}                             # fournie par poste.sh, jamais écrite ici
+    depends_on:
+      valkey-file: { condition: service_healthy }             # démarre une fois Valkey prêt
+
+  vente:
+    <<: *brique
+    build: { context: ., args: { SERVICE: vente } }
+    image: ruee/vente:dev
+    environment:
+      BASE_URL: postgres://ruee:${BASE_MOT_DE_PASSE:-}@base:5432/ruee
+      VALKEY_ADRESSE: valkey-billets:6379
+      PAIEMENT_URL: http://paiement:8080
+      CLE_PUBLIQUE: ${CLE_PUBLIQUE:-}
+    depends_on:
+      base: { condition: service_healthy }
+      valkey-billets: { condition: service_healthy }
+
+  paiement:
+    <<: *brique
+    build: { context: ., args: { SERVICE: paiement } }
+    image: ruee/paiement:dev
+    environment:
+      BANQUE_URL: http://banque:8080
+      BANQUE_CLE: ${BANQUE_CLE:-}
+
+  billets:
+    <<: *brique
+    build: { context: ., args: { SERVICE: billets } }
+    image: ruee/billets:dev
+    environment:
+      VALKEY_ADRESSE: valkey-billets:6379
+      SMTP_ADRESSE: courriel:1025
+    depends_on:
+      valkey-billets: { condition: service_healthy }
+
+  # Les données : chaque équipe a la sienne
+  base:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ruee
+      POSTGRES_PASSWORD: ${BASE_MOT_DE_PASSE:-}
+    tmpfs: [/var/lib/postgresql]   # base de développement jetable : elle repart vide à chaque démarrage
+    healthcheck:                   # « prête » quand PostgreSQL accepte les connexions
+      test: ["CMD", "pg_isready", "-U", "ruee"]
+      interval: 2s
+      retries: 30
+
+  valkey-file:      # la file d'attente (équipe salle d'attente)
+    image: valkey/valkey:9.0-alpine
+    healthcheck: { test: ["CMD", "valkey-cli", "ping"], interval: 2s, retries: 30 }
+
+  valkey-billets:   # la file des billets à émettre (équipe vente)
+    image: valkey/valkey:9.0-alpine
+    healthcheck: { test: ["CMD", "valkey-cli", "ping"], interval: 2s, retries: 30 }
+
+  # Les systèmes extérieurs, simulés
+  banque:
+    <<: *brique
+    build: { context: ., args: { SERVICE: banque } }
+    image: ruee/banque:dev
+    environment:
+      CLE_API: ${BANQUE_CLE:-}
+
+  courriel:   # un faux serveur de courriel : il garde les messages et les montre dans une page web
+    image: axllent/mailpit:v1.33.0
+    ports: ["127.0.0.1:8025:8025"]   # les courriels reçus : http://localhost:8025
