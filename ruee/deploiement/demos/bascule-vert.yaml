@@ -1,0 +1,17 @@
+# Bascule bleu-vert, étape 2 : la route envoie désormais /api vers le vert. Retour arrière : réappliquer la base
+# (kubectl apply -k deploiement/recette), et la route repart vers le bleu, toujours en marche.
+# Variante « canari » : deux destinations avec des poids (90 vers le bleu, 10 vers le vert) pour essayer d'abord
+# la nouvelle version sur une petite part du trafic.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vente
+  namespace: vente
+spec:
+  parentRefs:
+    - { name: commune, namespace: passerelle }
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+      backendRefs:
+        - { name: vente-vert, port: 8080 }

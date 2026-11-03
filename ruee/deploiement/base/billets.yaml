@@ -1,0 +1,93 @@
+# Les billets (envoi par courriel, de 0 à N exemplaires selon la file) et l'export de nuit vers les stades.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billets
+  namespace: vente
+  labels: { app: billets }
+spec:
+  replicas: 0 # c'est KEDA qui fixe le nombre d'exemplaires (ScaledObject plus bas)
+  selector:
+    matchLabels: { app: billets }
+  template:
+    metadata:
+      labels: { app: billets }
+    spec:
+      terminationGracePeriodSeconds: 30 # le temps de finir le billet en cours avant l'arrêt
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: billets
+          image: localhost:5001/ruee/billets:1.0.0
+          env:
+            - { name: VALKEY_ADRESSE, value: "valkey-billets:6379" }
+            - { name: SMTP_ADRESSE, value: "courriel:1025" } # le service de courriel, hors du cluster (externes.yaml)
+          resources:
+            requests: { cpu: 20m, memory: 24Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+# KEDA regarde la longueur de la file toutes les 5 secondes : 1 exemplaire par tranche de 20 commandes en attente,
+# 5 au plus ; plus rien après une minute de file vide
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: billets
+  namespace: vente
+spec:
+  scaleTargetRef: { name: billets }
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  pollingInterval: 5
+  cooldownPeriod: 60
+  triggers:
+    - type: redis # Valkey parle le même protocole que Redis
+      metadata:
+        address: valkey-billets.vente.svc.cluster.local:6379
+        listName: "billets:a-emettre"
+        listLength: "20"
+---
+# Chaque nuit à 3 h 00 : la liste des billets valides, déposée en SFTP chez le contrôle d'accès des stades
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: export-stades
+  namespace: vente
+spec:
+  schedule: "0 3 * * *"
+  timeZone: Europe/Paris
+  concurrencyPolicy: Forbid # jamais deux exports en même temps
+  jobTemplate:
+    spec:
+      backoffLimit: 2 # deux nouvelles tentatives en cas d'échec
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: export
+              image: localhost:5001/ruee/billets:1.0.0
+              args: ["export-stades"] # même image que billets, autre commande
+              envFrom:
+                - configMapRef: { name: stades } # adresse et empreinte du serveur des stades (créé par installer.sh)
+              env:
+                - name: MOT_DE_PASSE_LECTURE
+                  valueFrom: { secretKeyRef: { name: base-vente-lecture, key: password } }
+                - name: BASE_URL # le compte en lecture seule, sur la copie de la base (base-vente-ro)
+                  value: "postgresql://lecture:$(MOT_DE_PASSE_LECTURE)@base-vente-ro:5432/app"
+                - name: STADES_MOT_DE_PASSE
+                  valueFrom: { secretKeyRef: { name: stades, key: STADES_MOT_DE_PASSE } }
+              resources:
+                requests: { cpu: 20m, memory: 24Mi }
+                limits: { cpu: 200m, memory: 64Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }

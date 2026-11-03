@@ -1,0 +1,122 @@
+# Les deux files de Ruée dans Valkey (une base clé-valeur en mémoire) : la file d'attente (équipe salle d'attente) et
+# la file des billets à émettre (équipe vente). Un StatefulSet donne à chaque exemplaire un nom stable (valkey-file-0)
+# et son propre disque, qu'il retrouve s'il est relancé ailleurs.
+# Un seul exemplaire : en recette, Valkey tourne sur le nœud du plan de contrôle, qui joue ici le rôle du fournisseur
+# (comme un service géré : ElastiCache, Memorystore). Sur un nœud de travail, ce serait un point unique de défaillance :
+# en production, Valkey répliqué (avec Sentinel) ou un service géré.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-file
+  namespace: salle-attente
+spec:
+  clusterIP: None # service « sans tête » : le nom désigne directement le pod (exigé par un StatefulSet)
+  selector: { app: valkey-file }
+  ports:
+    - { name: valkey, port: 6379 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey-file
+  namespace: salle-attente
+spec:
+  serviceName: valkey-file
+  replicas: 1
+  selector:
+    matchLabels: { app: valkey-file }
+  template:
+    metadata:
+      labels: { app: valkey-file }
+    spec:
+      nodeSelector: { node-role.kubernetes.io/control-plane: "" }
+      tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999 # l'utilisateur « valkey » de l'image
+        fsGroup: 999   # le disque appartient à ce groupe : Valkey peut y écrire
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: valkey
+          image: valkey/valkey:9.0-alpine
+          args: ["--save", "60", "1000"] # une copie sur disque chaque minute s'il y a eu au moins 1 000 écritures
+          ports:
+            - { name: valkey, containerPort: 6379 }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+          readinessProbe:
+            exec: { command: ["valkey-cli", "ping"] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: donnees, mountPath: /data }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+  volumeClaimTemplates: # un disque de 1 Gio par exemplaire, créé à la demande par la classe de stockage du cluster
+    - metadata:
+        name: donnees
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-billets
+  namespace: vente
+spec:
+  clusterIP: None
+  selector: { app: valkey-billets }
+  ports:
+    - { name: valkey, port: 6379 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey-billets
+  namespace: vente
+spec:
+  serviceName: valkey-billets
+  replicas: 1
+  selector:
+    matchLabels: { app: valkey-billets }
+  template:
+    metadata:
+      labels: { app: valkey-billets }
+    spec:
+      nodeSelector: { node-role.kubernetes.io/control-plane: "" }
+      tolerations: [{ key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: valkey
+          image: valkey/valkey:9.0-alpine
+          args: ["--appendonly", "yes"] # chaque écriture est journalisée : un billet à émettre ne se perd pas
+          ports:
+            - { name: valkey, containerPort: 6379 }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+          readinessProbe:
+            exec: { command: ["valkey-cli", "ping"] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: donnees, mountPath: /data }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+  volumeClaimTemplates:
+    - metadata:
+        name: donnees
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 1Gi }

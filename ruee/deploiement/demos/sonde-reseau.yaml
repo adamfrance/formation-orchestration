@@ -1,0 +1,47 @@
+# Deux sondes pour tester le réseau : un petit conteneur avec curl, l'un dans l'espace de la vente, l'autre dans celui
+# de la salle d'attente. On s'en sert pour vérifier qui peut joindre paiement :
+#   kubectl exec -n vente sonde -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://paiement.paiement:8080/sante/vivant
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sonde
+  namespace: vente
+  labels: { app: vente } # se présente comme la vente, la seule autorisée à appeler paiement
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 100 # l'utilisateur « curl_user » de l'image, par son numéro
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+    - name: sonde
+      image: curlimages/curl:8.23.0
+      command: ["sleep", "3600"] # attend qu'on lui demande quelque chose
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 100m, memory: 32Mi }
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sonde
+  namespace: salle-attente
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 100
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+    - name: sonde
+      image: curlimages/curl:8.23.0
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 100m, memory: 32Mi }
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: ["ALL"] }

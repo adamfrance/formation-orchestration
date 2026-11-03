@@ -1,0 +1,22 @@
+# Un conteneur qui demande trop : 3 processeurs et 2 Gio de mémoire, alors que le plafond d'un conteneur est de
+# 1 processeur et 512 Mio dans l'espace vente (LimitRange), et le total de l'équipe de 2 processeurs (ResourceQuota).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gourmand
+  namespace: vente
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+    - name: gourmand
+      image: busybox:1.37
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "3", memory: 2Gi }
+        limits: { cpu: "3", memory: 2Gi }
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: { drop: ["ALL"] }

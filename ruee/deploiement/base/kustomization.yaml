@@ -1,0 +1,13 @@
+# La plateforme Ruée, toutes équipes confondues : la liste des fichiers que Kustomize (intégré à kubectl) assemble.
+# kubectl apply -k deploiement/recette applique cette base avec les réglages de la recette.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - espaces.yaml
+  - salle-attente.yaml
+  - passerelle.yaml
+  - valkey.yaml
+  - base-vente.yaml
+  - vente.yaml
+  - billets.yaml
+  - paiement.yaml

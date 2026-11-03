@@ -1,0 +1,34 @@
+# Ce que Prometheus doit lire : la page /metrics de chaque brique de Ruée, toutes les 15 secondes.
+# Un PodMonitor par équipe, dans son espace de noms ; l'opérateur Prometheus les trouve tout seul.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+spec:
+  selector:
+    matchLabels: { app: salle-attente }
+  podMetricsEndpoints:
+    - { port: http, path: /metrics }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: vente
+  namespace: vente
+spec:
+  selector:
+    matchLabels: { app: vente }
+  podMetricsEndpoints:
+    - { port: http, path: /metrics }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: paiement
+  namespace: paiement
+spec:
+  selector:
+    matchLabels: { app: paiement }
+  podMetricsEndpoints:
+    - { port: http, path: /metrics }

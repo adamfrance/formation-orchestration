@@ -1,0 +1,20 @@
+# Ce qu'un attaquant (ou un développeur pressé) aimerait lancer : un conteneur privilégié, en administrateur, qui voit
+# les processus et le disque de la machine. La norme « restricted » de l'espace paiement le refuse à l'entrée.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privilegie
+  namespace: paiement
+spec:
+  hostPID: true # voir tous les processus de la machine
+  containers:
+    - name: shell
+      image: busybox:1.37
+      command: ["sleep", "3600"]
+      securityContext:
+        privileged: true # tous les droits sur la machine
+      volumeMounts:
+        - { name: disque-machine, mountPath: /machine }
+  volumes:
+    - name: disque-machine
+      hostPath: { path: / } # le disque de la machine entière

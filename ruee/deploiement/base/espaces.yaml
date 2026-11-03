@@ -1,0 +1,26 @@
+# Un espace de noms par équipe : chaque équipe y range ses ressources, y a ses droits (jour 3) et ses quotas.
+# L'étiquette pod-security.kubernetes.io/enforce applique la norme de sécurité « restricted » de Kubernetes :
+# un pod qui demande des privilèges (root, accès à la machine…) est refusé à l'entrée.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: salle-attente
+  labels:
+    equipe: salle-attente
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vente
+  labels:
+    equipe: vente
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: paiement
+  labels:
+    equipe: paiement
+    pod-security.kubernetes.io/enforce: restricted

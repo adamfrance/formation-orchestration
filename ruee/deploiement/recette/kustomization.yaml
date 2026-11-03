@@ -1,0 +1,11 @@
+# L'environnement de recette : la base, plus les versions des images à déployer. Changer une version ici, puis
+# kubectl apply -k deploiement/recette, c'est une mise en production (Argo CD le fait tout seul depuis Git).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+images:
+  - { name: localhost:5001/ruee/salle-attente, newTag: "1.0.0" }
+  - { name: localhost:5001/ruee/vente, newTag: "1.0.0" }
+  - { name: localhost:5001/ruee/paiement, newTag: "1.0.0" }
+  - { name: localhost:5001/ruee/billets, newTag: "1.0.0" }

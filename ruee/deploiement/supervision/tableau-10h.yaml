@@ -1,0 +1,52 @@
+# Le tableau de bord « 10 h 00 », que la direction suit en direct pendant l'ouverture des ventes. Grafana le charge
+# tout seul : un ConfigMap avec l'étiquette grafana_dashboard, n'importe où dans le cluster.
+# Chaque panneau est une requête PromQL (le langage de requête de Prometheus) sur les mesures de Ruée.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tableau-10h
+  namespace: supervision
+  labels:
+    grafana_dashboard: "1"
+data:
+  ruee-10h.json: |
+    {
+      "title": "Ruée · 10 h 00",
+      "uid": "ruee-10h",
+      "refresh": "5s",
+      "time": { "from": "now-15m", "to": "now" },
+      "schemaVersion": 39,
+      "panels": [
+        { "type": "stat", "title": "Fans qui attendent leur tour", "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "max(ruee_file_en_attente)", "refId": "A" } ] },
+        { "type": "stat", "title": "Places vendues", "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "sum(ruee_places_vendues_total)", "refId": "A" } ] },
+        { "type": "stat", "title": "Erreurs serveur par seconde", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } } },
+          "targets": [ { "expr": "sum(rate(ruee_requetes_http_total{code=~\"5..\"}[1m])) or vector(0)", "refId": "A" } ] },
+        { "type": "stat", "title": "Exemplaires de la salle d'attente", "gridPos": { "x": 18, "y": 0, "w": 6, "h": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "kube_deployment_status_replicas_available{namespace=\"salle-attente\",deployment=\"salle-attente\"}", "refId": "A" } ] },
+        { "type": "timeseries", "title": "Entrées dans la file et admissions, par seconde", "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(ruee_requetes_http_total{route=\"/file/entrer\",code=\"201\"}[1m]))", "legendFormat": "entrées", "refId": "A" },
+            { "expr": "sum(rate(ruee_jetons_emis_total[1m]))", "legendFormat": "jetons remis", "refId": "B" } ] },
+        { "type": "timeseries", "title": "Ventes et paiements, par seconde", "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(rate(ruee_places_vendues_total[1m]))", "legendFormat": "places vendues", "refId": "A" },
+            { "expr": "sum by (statut) (rate(ruee_paiements_total[1m]))", "legendFormat": "paiement {{statut}}", "refId": "B" } ] },
+        { "type": "timeseries", "title": "Exemplaires en service, par brique", "gridPos": { "x": 0, "y": 13, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "kube_deployment_status_replicas_available{namespace=~\"salle-attente|vente|paiement\"}", "legendFormat": "{{deployment}}", "refId": "A" } ] },
+        { "type": "timeseries", "title": "Temps de réponse des commandes (95 % en dessous)", "gridPos": { "x": 12, "y": 13, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "targets": [ { "expr": "histogram_quantile(0.95, sum by (le) (rate(ruee_requetes_http_secondes_bucket{route=\"/api/commandes\"}[1m])))", "legendFormat": "commandes", "refId": "A" } ] }
+      ]
+    }

@@ -1,0 +1,28 @@
+# La base de données de la vente, gérée par l'opérateur CloudNativePG : on décrit ce qu'on veut (deux exemplaires,
+# un compte en lecture seule), l'opérateur s'occupe du reste : création, réplication, bascule automatique si
+# l'exemplaire principal tombe, mises à jour, et les Secrets avec les mots de passe.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: base-vente
+  namespace: vente
+spec:
+  instances: 2 # un exemplaire principal (lecture et écriture) et une copie, prête à prendre le relais
+  storage:
+    size: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 384Mi }
+  postgresql:
+    parameters:
+      shared_buffers: "64MB" # réglé pour un poste ; en production, environ le quart de la mémoire
+      max_connections: "100"
+  affinity:
+    enablePodAntiAffinity: true # les deux exemplaires sur deux nœuds différents
+    topologyKey: kubernetes.io/hostname
+  managed:
+    roles: # le compte de l'export de nuit : il ne peut que lire (droits donnés par vente au démarrage)
+      - name: lecture
+        ensure: present
+        login: true
+        passwordSecret: { name: base-vente-lecture } # créé par installer.sh

@@ -1,0 +1,124 @@
+# L'équipe salle d'attente : la brique qui encaisse le choc de 10 h 00, et sa file dans Valkey.
+
+# La configuration, modifiable sans reconstruire l'image (un redémarrage des pods la prend en compte)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+data:
+  DEBIT_PAR_SECONDE: "50" # fans admis dans la vente par seconde : ce que la base de la vente peut absorber
+  DUREE_JETON: "10m"
+  VALKEY_ADRESSE: "valkey-file:6379"
+---
+# Le Deployment : « je veux N exemplaires de ce conteneur, toujours ». Il crée un ReplicaSet par version, qui crée les pods.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+  labels: { app: salle-attente }
+spec:
+  replicas: 2 # au moins deux : un exemplaire peut tomber sans que le service s'arrête
+  selector:
+    matchLabels: { app: salle-attente } # les pods que ce Deployment possède
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } # mise à jour : un nouveau pod prêt avant d'en arrêter un ancien
+  template: # le modèle de chaque pod
+    metadata:
+      labels: { app: salle-attente }
+    spec:
+      securityContext: # conforme à la norme « restricted »
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault } # le filtre d'appels système par défaut du moteur
+      containers:
+        - name: salle-attente
+          image: localhost:5001/ruee/salle-attente:1.0.0 # la version est fixée par kustomization.yaml
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - configMapRef: { name: salle-attente } # chaque clé du ConfigMap devient une variable
+          env:
+            - name: CLE_PRIVEE # la clé qui signe les jetons, depuis un Secret (créé par installer.sh)
+              valueFrom: { secretKeyRef: { name: jeton, key: CLE_PRIVEE } }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi } # ce que le scheduler réserve sur le nœud (50m = 5 % d'un processeur)
+            limits: { cpu: 500m, memory: 64Mi }   # au-delà de la mémoire, le conteneur est arrêté et relancé
+          startupProbe: # au démarrage, jusqu'à 2 min 30 pour se connecter à la base ou à la file (30 essais × 5 s) ;
+            httpGet: { path: /sante/vivant, port: http } # la sonde de vie ne commence qu'après
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe: # prêt à recevoir du trafic ? (sinon retiré du Service)
+            httpGet: { path: /sante/pret, port: http }
+            periodSeconds: 2
+          livenessProbe: # encore en vie ? (sinon redémarré)
+            httpGet: { path: /sante/vivant, port: http }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      topologySpreadConstraints: # répartir les exemplaires sur les nœuds : une machine qui tombe n'emporte pas tout
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: salle-attente } }
+          matchLabelKeys: [pod-template-hash] # équilibrer chaque version à part (sinon une mise à jour regroupe tout)
+      tolerations: # nœud injoignable : déplacer les pods au bout de 20 s (5 min par défaut)
+        - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 20 }
+        - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 20 }
+---
+# Le Service : une adresse et un nom fixes (salle-attente.salle-attente.svc), qui répartissent entre les pods prêts
+apiVersion: v1
+kind: Service
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+  labels: { app: salle-attente }
+spec:
+  selector: { app: salle-attente }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+# La montée en charge automatique : de 2 à 8 exemplaires, pour garder l'usage du processeur autour de 60 % de la demande
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: salle-attente }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } }
+  behavior:
+    scaleUp: { stabilizationWindowSeconds: 0 }    # monter tout de suite
+    scaleDown: { stabilizationWindowSeconds: 60 } # descendre seulement après une minute de calme
+---
+# Pendant une maintenance (vidage d'un nœud), au moins un exemplaire reste toujours en service
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: salle-attente } }
+---
+# La route : la passerelle commune envoie la page du fan (/) et la file (/file) vers la salle d'attente
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+spec:
+  parentRefs:
+    - { name: commune, namespace: passerelle } # la passerelle de l'équipe plateforme
+  rules:
+    - matches:
+        - path: { type: Exact, value: / }
+        - path: { type: PathPrefix, value: /file }
+      backendRefs:
+        - { name: salle-attente, port: 8080 }

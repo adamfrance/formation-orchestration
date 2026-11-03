@@ -1,0 +1,107 @@
+# L'équipe vente : le catalogue, la réservation et la commande (un seul bloc, une seule base PostgreSQL).
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vente
+  namespace: vente
+data:
+  DUREE_BLOCAGE: "10m"
+  PLACES_PAR_CONCERT: "2000"
+  VALKEY_ADRESSE: "valkey-billets:6379"
+  PAIEMENT_URL: "http://paiement.paiement:8080" # le Service paiement, dans l'espace de noms paiement
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vente
+  namespace: vente
+  labels: { app: vente, couleur: bleu }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: vente, couleur: bleu }
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: vente, couleur: bleu } # la couleur sert à la bascule bleu-vert
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: vente
+          image: localhost:5001/ruee/vente:1.0.0
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - configMapRef: { name: vente }
+          env:
+            - name: COULEUR
+              value: bleu
+            - name: CLE_PUBLIQUE # pour vérifier les jetons de la salle d'attente (ConfigMap créé par installer.sh)
+              valueFrom: { configMapKeyRef: { name: jeton-public, key: CLE_PUBLIQUE } }
+            - name: BASE_URL # l'adresse complète de la base, mot de passe compris : le Secret créé par CloudNativePG
+              valueFrom: { secretKeyRef: { name: base-vente-app, key: uri } }
+          resources:
+            requests: { cpu: 50m, memory: 48Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+          startupProbe: # au démarrage, jusqu'à 2 min 30 pour se connecter à la base ou à la file (30 essais × 5 s) ;
+            httpGet: { path: /sante/vivant, port: http } # la sonde de vie ne commence qu'après
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /sante/pret, port: http } # prêt seulement si la base répond
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /sante/vivant, port: http }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: vente } }
+          matchLabelKeys: [pod-template-hash] # équilibrer chaque version à part (sinon une mise à jour regroupe tout)
+      tolerations:
+        - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 20 }
+        - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 20 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vente
+  namespace: vente
+  labels: { app: vente }
+spec:
+  selector: { app: vente, couleur: bleu }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vente
+  namespace: vente
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: vente } }
+---
+# La route : /api va vers la vente. Pour une bascule bleu-vert, on change ici la destination (demos/bascule-vert.yaml).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vente
+  namespace: vente
+spec:
+  parentRefs:
+    - { name: commune, namespace: passerelle }
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+      backendRefs:
+        - { name: vente, port: 8080 }

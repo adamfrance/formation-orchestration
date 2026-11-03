@@ -1,0 +1,56 @@
+# Ce que la passerelle (Envoy) fait pour Ruée, avant même que le trafic n'atteigne les services :
+#   - freiner les robots : 20 entrées par seconde et par adresse IP sur la salle d'attente, au-delà une réponse 429 ;
+#   - résister aux pannes : une connexion qui n'aboutit pas en 1 s est retentée ailleurs (2 fois au plus), et un pod qui
+#     échoue deux fois de suite est écarté 30 s. On ne rejoue que si la requête n'a jamais atteint le service : un
+#     paiement ne part jamais deux fois.
+# Une politique s'attache à une route de son propre espace de noms.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: salle-attente
+  namespace: salle-attente
+spec:
+  targetRefs:
+    - { group: gateway.networking.k8s.io, kind: HTTPRoute, name: salle-attente }
+  rateLimit:
+    type: Local # chaque exemplaire d'Envoy compte de son côté, sans base partagée
+    local:
+      rules:
+        - clientSelectors:
+            - sourceCIDR: { type: Distinct, value: 0.0.0.0/0 } # un compteur par adresse IP
+          limit: { requests: 20, unit: Second }
+  timeout:
+    tcp: { connectTimeout: 1s }
+  retry:
+    numRetries: 2
+    retryOn:
+      triggers: ["connect-failure", "refused-stream"] # seulement quand la requête n'est pas partie
+  healthCheck:
+    passive: # l'« éjection » : un pod qui échoue est mis de côté un moment
+      splitExternalLocalOriginErrors: true
+      consecutiveLocalOriginFailures: 2
+      interval: 2s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: vente
+  namespace: vente
+spec:
+  targetRefs:
+    - { group: gateway.networking.k8s.io, kind: HTTPRoute, name: vente }
+  timeout:
+    tcp: { connectTimeout: 1s }
+  retry:
+    numRetries: 2
+    retryOn:
+      triggers: ["connect-failure", "refused-stream"]
+  healthCheck:
+    passive:
+      splitExternalLocalOriginErrors: true
+      consecutiveLocalOriginFailures: 2
+      interval: 2s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50

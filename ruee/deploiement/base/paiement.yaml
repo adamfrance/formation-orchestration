@@ -1,0 +1,74 @@
+# L'équipe paiement : la seule brique qui parle à la banque. Pas de route sur la passerelle : seule la vente l'appelle.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paiement
+  namespace: paiement
+  labels: { app: paiement }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: paiement }
+  template:
+    metadata:
+      labels: { app: paiement }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: paiement
+          image: localhost:5001/ruee/paiement:1.0.0
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: BANQUE_URL, value: "http://banque:8080" } # la banque, hors du cluster (externes.yaml)
+            - name: BANQUE_CLE
+              valueFrom: { secretKeyRef: { name: banque, key: BANQUE_CLE } } # créé par installer.sh
+          resources:
+            requests: { cpu: 20m, memory: 24Mi }
+            limits: { cpu: 300m, memory: 64Mi }
+          startupProbe: # au démarrage, jusqu'à 2 min 30 pour se connecter à la base ou à la file (30 essais × 5 s) ;
+            httpGet: { path: /sante/vivant, port: http } # la sonde de vie ne commence qu'après
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /sante/pret, port: http }
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /sante/vivant, port: http }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: paiement } }
+          matchLabelKeys: [pod-template-hash] # équilibrer chaque version à part (sinon une mise à jour regroupe tout)
+      tolerations:
+        - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 20 }
+        - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 20 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paiement
+  namespace: paiement
+  labels: { app: paiement }
+spec:
+  selector: { app: paiement }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: paiement
+  namespace: paiement
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: paiement } }

@@ -1,0 +1,57 @@
+# Bascule bleu-vert, étape 1 : la nouvelle version de la vente (1.1.0, « vert ») démarre à côté de l'ancienne (« bleu »).
+# Elle ne reçoit encore aucun trafic : la route envoie toujours /api vers le Service « vente » (bleu).
+# On peut la tester par son propre Service avant de basculer.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vente-vert
+  namespace: vente
+  labels: { app: vente, couleur: vert }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: vente, couleur: vert }
+  template:
+    metadata:
+      labels: { app: vente, couleur: vert }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: vente
+          image: localhost:5001/ruee/vente:1.1.0 # la nouvelle version
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - configMapRef: { name: vente }
+          env:
+            - { name: COULEUR, value: vert }
+            - name: CLE_PUBLIQUE
+              valueFrom: { configMapKeyRef: { name: jeton-public, key: CLE_PUBLIQUE } }
+            - name: BASE_URL
+              valueFrom: { secretKeyRef: { name: base-vente-app, key: uri } }
+          resources:
+            requests: { cpu: 50m, memory: 48Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+          startupProbe: # au démarrage, jusqu'à 2 min 30 pour se connecter à la base ou à la file (30 essais × 5 s) ;
+            httpGet: { path: /sante/vivant, port: http } # la sonde de vie ne commence qu'après
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /sante/pret, port: http }
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vente-vert
+  namespace: vente
+spec:
+  selector: { app: vente, couleur: vert }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
