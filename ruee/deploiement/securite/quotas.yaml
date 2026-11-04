@@ -1,0 +1,27 @@
+# Les limites de ressources de chaque équipe : un quota pour l'espace de noms (le total), et des valeurs par défaut pour
+# les conteneurs qui n'en déclarent pas. Une équipe ne peut pas affamer les autres, même par erreur.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: quota
+  namespace: vente
+spec:
+  hard:
+    requests.cpu: "2"        # au plus 2 processeurs réservés pour toute l'équipe
+    requests.memory: 2Gi
+    limits.memory: 3Gi
+    pods: "20"
+    persistentvolumeclaims: "4"
+---
+# Un conteneur sans demande ni limite en reçoit par défaut ; aucun conteneur ne peut dépasser le maximum
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: limites
+  namespace: vente
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m, memory: 32Mi } # la demande par défaut
+      default: { cpu: 500m, memory: 128Mi }      # la limite par défaut
+      max: { cpu: "1", memory: 512Mi }           # le plafond pour un conteneur

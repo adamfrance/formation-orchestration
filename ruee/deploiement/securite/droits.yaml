@@ -1,0 +1,50 @@
+# Les droits de chaque équipe (RBAC) : chacune gère ses propres applications dans son espace de noms, et rien d'autre.
+# Les personnes sont reconnues par l'annuaire de l'entreprise (OIDC) : on donne les droits à des groupes, pas à des
+# personnes. Personne, en dehors de l'équipe plateforme, ne lit les Secrets d'une autre équipe.
+
+# Le rôle « développeur d'une équipe » : déployer et observer ses applications, lire ses journaux ; pas de Secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: equipe-developpeur
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch", "update", "patch"] # mettre à jour, pas créer de nouvelles applications à la main
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+# Le ClusterRole est un modèle ; le RoleBinding l'applique à un groupe, dans un seul espace de noms
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: equipe-vente
+  namespace: vente
+subjects:
+  - { kind: Group, name: equipe-vente, apiGroup: rbac.authorization.k8s.io }
+roleRef:
+  { kind: ClusterRole, name: equipe-developpeur, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: equipe-salle-attente
+  namespace: salle-attente
+subjects:
+  - { kind: Group, name: equipe-salle-attente, apiGroup: rbac.authorization.k8s.io }
+roleRef:
+  { kind: ClusterRole, name: equipe-developpeur, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: equipe-paiement
+  namespace: paiement
+subjects:
+  - { kind: Group, name: equipe-paiement, apiGroup: rbac.authorization.k8s.io }
+roleRef:
+  { kind: ClusterRole, name: equipe-developpeur, apiGroup: rbac.authorization.k8s.io }

@@ -1,0 +1,51 @@
+# Isoler paiement par le réseau (la norme PCI DSS demande de réduire au minimum ce qui peut joindre les données de
+# carte). Par défaut, dans Kubernetes, tout pod peut joindre tout pod : on inverse la règle pour l'espace paiement.
+
+# 1. Rien n'entre dans paiement et rien n'en sort, sauf ce qui est autorisé plus bas
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tout-fermer
+  namespace: paiement
+spec:
+  podSelector: {} # tous les pods de l'espace
+  policyTypes: ["Ingress", "Egress"]
+---
+# 2. Seuls les pods de la vente peuvent appeler paiement, sur son port (et Prometheus, pour lire les mesures)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: entree-depuis-la-vente
+  namespace: paiement
+spec:
+  podSelector: { matchLabels: { app: paiement } }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: vente } }
+          podSelector: { matchLabels: { app: vente } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: supervision } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: prometheus } }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# 3. paiement ne peut joindre que le DNS du cluster et la banque
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sortie-vers-la-banque
+  namespace: paiement
+spec:
+  podSelector: { matchLabels: { app: paiement } }
+  policyTypes: ["Egress"]
+  egress:
+    - to: # le DNS du cluster (pour trouver « banque »)
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to: # la banque, hors du cluster (adresse fixe donnée par installer.sh)
+        - ipBlock: { cidr: 172.18.255.10/32 }
+      ports:
+        - { protocol: TCP, port: 8080 }

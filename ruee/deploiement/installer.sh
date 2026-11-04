@@ -92,7 +92,7 @@ externe vente courriel 1025 "$ip_courriel"
 
 # 5. La plateforme, puis l'attente : la base d'abord (les autres en dépendent), puis chaque Deployment
 kubectl apply -k deploiement/recette
-kubectl wait cluster/base-vente -n vente --for=condition=Ready --timeout=600s   # 10 min : le premier téléchargement de PostgreSQL est long
+kubectl wait clusters.postgresql.cnpg.io/base-vente -n vente --for=condition=Ready --timeout=600s   # 10 min : le premier téléchargement de PostgreSQL est long
 kubectl rollout status statefulset/valkey-file -n salle-attente --timeout=180s
 kubectl rollout status statefulset/valkey-billets -n vente --timeout=180s
 for d in salle-attente/salle-attente vente/vente paiement/paiement; do
